@@ -61,3 +61,4 @@ ultralytics==8.4.51
 ultralytics-thop==2.0.19
 urllib3==2.7.0
 wcwidth==0.7.0
+streamlit==1.57.0
