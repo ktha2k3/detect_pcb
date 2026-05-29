@@ -15,6 +15,11 @@ model_path = scripts_dir / "download_deps" / "models" / "best.pt"
 output_dir = scripts_dir / "runs_pcb"
 
 IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG")
+MODEL_REGISTRY = {
+    "current_pcb_yolov8n_seg": scripts_dir / "download_deps" / "models" / "best.pt",
+    "sammy_yolov8n_pcb_detect": scripts_dir / "download_deps" / "models" / "sammy_yolov8n_pcb" / "best.pt",
+    "kadiri_yolov8_pcb_detect": scripts_dir / "download_deps" / "models" / "kadiri_yolov8_pcb" / "best.pt",
+}
 
 
 def find_image_paths(root_dir: Path) -> list[Path]:
@@ -24,11 +29,20 @@ def find_image_paths(root_dir: Path) -> list[Path]:
     return sorted(image_paths)
 
 
-@lru_cache(maxsize=1)
-def load_model() -> YOLO:
-    if not model_path.exists():
-        raise FileNotFoundError(f"Could not find model: {model_path}")
-    return YOLO(str(model_path))
+def resolve_model_path(model_key_or_path: str | None = None) -> Path:
+    if not model_key_or_path:
+        return model_path
+    if model_key_or_path in MODEL_REGISTRY:
+        return MODEL_REGISTRY[model_key_or_path]
+    return Path(model_key_or_path).expanduser().resolve()
+
+
+@lru_cache(maxsize=8)
+def load_model(model_key_or_path: str | None = None) -> YOLO:
+    selected_model_path = resolve_model_path(model_key_or_path)
+    if not selected_model_path.exists():
+        raise FileNotFoundError(f"Could not find model: {selected_model_path}")
+    return YOLO(str(selected_model_path))
 
 
 def predict_one(
@@ -103,6 +117,11 @@ def predict_many(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run PCB inference on test images.")
+    parser.add_argument(
+        "--model",
+        default="current_pcb_yolov8n_seg",
+        help="Model key from registry or direct path to .pt file",
+    )
     parser.add_argument("--input-dir", type=Path, default=extract_dir, help="Directory containing test images")
     parser.add_argument("--limit", type=int, default=10, help="Maximum number of images to process")
     parser.add_argument("--save", action="store_true", help="Save annotated outputs to runs_pcb/")
@@ -116,8 +135,10 @@ def main() -> None:
     print("CURRENT FILE:", current_file)
     print("SCRIPTS DIR:", scripts_dir)
     print("DATA DIR:", args.input_dir)
-    print("MODEL PATH:", model_path)
-    print("MODEL EXISTS:", model_path.exists())
+    selected_model_path = resolve_model_path(args.model)
+    print("MODEL:", args.model)
+    print("MODEL PATH:", selected_model_path)
+    print("MODEL EXISTS:", selected_model_path.exists())
     print("DATA EXISTS:", args.input_dir.exists())
 
     if not args.input_dir.exists():
@@ -129,7 +150,7 @@ def main() -> None:
     if len(image_paths) == 0:
         raise FileNotFoundError(f"Could not find images in folder: {args.input_dir}")
 
-    model = load_model()
+    model = load_model(args.model)
     for image_path in image_paths[: args.limit]:
         print("\nIMAGE:", image_path)
         result, detections = predict_one(

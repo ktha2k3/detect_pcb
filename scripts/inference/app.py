@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -11,7 +12,7 @@ import numpy as np
 import streamlit as st
 from PIL import Image
 
-from inference import load_model, predict_one
+from inference import MODEL_REGISTRY, load_model, predict_one
 from db import (
     init_db,
     add_user,
@@ -141,6 +142,7 @@ def group_detection_rows(rows: list[dict]) -> list[dict]:
                 "username": row.get("username"),
                 "original_image_path": row.get("original_image_path"),
                 "annotated_image_path": row.get("annotated_image_path"),
+                "model_name": row.get("model_name"),
                 "defects": [],
             },
         )
@@ -243,8 +245,8 @@ def logout() -> None:
 
 
 @st.cache_resource
-def get_model():
-    return load_model()
+def get_model(model_key_or_path: str):
+    return load_model(model_key_or_path)
 
 
 def render_auth_screen() -> None:
@@ -522,7 +524,7 @@ def render_app() -> None:
     st.title("PCB Batch Test")
 
     st.caption("Upload multiple images, run YOLO inference once, and review predictions image by image.")
-    controls = st.columns(4)
+    controls = st.columns(5)
     with controls[0]:
         confidence_points = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.60, 0.70, 0.80, 0.90]
         conf = st.select_slider("Confidence threshold", options=confidence_points, value=0.05)
@@ -533,6 +535,19 @@ def render_app() -> None:
         imgsz = st.selectbox("Image size", [640, 768, 960], index=0)
     with controls[3]:
         save_outputs = st.toggle("Save outputs to disk", value=True)
+    with controls[4]:
+        compare_mode = st.toggle("Compare multiple models", value=False)
+
+    available_models = list(MODEL_REGISTRY.keys())
+    if compare_mode:
+        selected_models = st.multiselect(
+            "Select models to compare",
+            options=available_models,
+            default=["current_pcb_yolov8n_seg"],
+        )
+    else:
+        selected_model = st.selectbox("Select model", options=available_models, index=0)
+        selected_models = [selected_model]
 
     uploaded_files = st.file_uploader(
         "Choose images",
@@ -549,7 +564,10 @@ def render_app() -> None:
         st.warning("Please upload at least one image.")
         return
 
-    model = get_model()
+    if not selected_models:
+        st.warning("Please select at least one model.")
+        return
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = RUNS_DIR / f"{st.session_state['username']}_{timestamp}"
     if save_outputs:
@@ -558,61 +576,88 @@ def render_app() -> None:
     run_id = create_run(st.session_state.get("username"))
 
     results = []
+    model_stats = []
     progress = st.progress(0)
     detection_count = 0
+    total_jobs = len(uploaded_files) * len(selected_models)
+    completed_jobs = 0
 
-    for index, uploaded_file in enumerate(uploaded_files, start=1):
-        image_array = file_to_array(uploaded_file)
-        result, detections = predict_one(
-            image_array,
-            model=model,
-            imgsz=imgsz,
-            conf=conf,
-            iou=iou,
-            save=False,
-        )
+    for model_key in selected_models:
+        model = get_model(model_key)
+        model_detection_count = 0
+        started_at = time.perf_counter()
 
-        annotated_bgr = result.plot()
-        annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
-
-        original_path = run_dir / f"{Path(uploaded_file.name).stem}_original.png"
-        annotated_path = run_dir / f"{Path(uploaded_file.name).stem}_annotated.png"
-        save_rgb_image(image_array, original_path)
-        cv2.imwrite(str(annotated_path), annotated_bgr)
-
-        # persist detections
-        for det in detections:
-            add_detection(
-                run_id,
-                uploaded_file.name,
-                Path(uploaded_file.name).stem,
-                det.get("class_name"),
-                det.get("confidence"),
-                json.dumps(det.get("xyxy")),
-                str(original_path),
-                str(annotated_path),
+        for uploaded_file in uploaded_files:
+            image_array = file_to_array(uploaded_file)
+            result, detections = predict_one(
+                image_array,
+                model=model,
+                imgsz=imgsz,
+                conf=conf,
+                iou=iou,
+                save=False,
             )
-            detection_count += 1
 
-        results.append(
+            annotated_bgr = result.plot()
+            annotated_rgb = cv2.cvtColor(annotated_bgr, cv2.COLOR_BGR2RGB)
+
+            model_safe_name = model_key.replace("/", "_")
+            original_path = run_dir / f"{Path(uploaded_file.name).stem}_{model_safe_name}_original.png"
+            annotated_path = run_dir / f"{Path(uploaded_file.name).stem}_{model_safe_name}_annotated.png"
+            if save_outputs:
+                save_rgb_image(image_array, original_path)
+                cv2.imwrite(str(annotated_path), annotated_bgr)
+
+            for det in detections:
+                add_detection(
+                    run_id,
+                    uploaded_file.name,
+                    Path(uploaded_file.name).stem,
+                    det.get("class_name"),
+                    det.get("confidence"),
+                    json.dumps(det.get("xyxy")),
+                    str(original_path) if save_outputs else None,
+                    str(annotated_path) if save_outputs else None,
+                    model_key,
+                )
+                detection_count += 1
+                model_detection_count += 1
+
+            results.append(
+                {
+                    "name": uploaded_file.name,
+                    "model": model_key,
+                    "original": image_array,
+                    "annotated": annotated_rgb,
+                    "detections": translate_detection_rows(detections),
+                    "original_image_path": str(original_path) if save_outputs else "",
+                    "annotated_image_path": str(annotated_path) if save_outputs else "",
+                }
+            )
+            completed_jobs += 1
+            progress.progress(completed_jobs / total_jobs)
+
+        elapsed = time.perf_counter() - started_at
+        model_stats.append(
             {
-                "name": uploaded_file.name,
-                "original": image_array,
-                "annotated": annotated_rgb,
-                "detections": translate_detection_rows(detections),
-                "original_image_path": str(original_path),
-                "annotated_image_path": str(annotated_path),
+                "model": model_key,
+                "images": len(uploaded_files),
+                "detections": model_detection_count,
+                "avg_time_per_image_sec": round(elapsed / max(len(uploaded_files), 1), 4),
             }
         )
-        progress.progress(index / len(uploaded_files))
     total_detections = sum(len(item["detections"]) for item in results)
-    stats = st.columns(3)
+    stats = st.columns(4)
     stats[0].metric("Images", len(results))
     stats[1].metric("Detections", total_detections)
-    stats[2].metric("Annotated", "Saved" if save_outputs else "In memory")
+    stats[2].metric("Models", len(selected_models))
+    stats[3].metric("Annotated", "Saved" if save_outputs else "In memory")
 
     if save_outputs:
         st.info(f"Annotated images saved to: {run_dir}")
+
+    st.subheader("Model comparison summary")
+    st.dataframe(model_stats, use_container_width=True)
 
     # complete run record
     try:
@@ -622,7 +667,7 @@ def render_app() -> None:
 
     for item in results:
         with st.container(border=True):
-            st.subheader(item["name"])
+            st.subheader(f"{item['name']} | {item['model']}")
             left, right = st.columns(2)
             left.image(item["original"], caption="Original", use_container_width=True)
             right.image(item["annotated"], caption="Prediction", use_container_width=True)

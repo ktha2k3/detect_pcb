@@ -112,6 +112,8 @@ def ensure_detection_columns(cur) -> None:
         cur.execute("ALTER TABLE detections ADD COLUMN original_image_path TEXT")
     if "annotated_image_path" not in existing_columns:
         cur.execute("ALTER TABLE detections ADD COLUMN annotated_image_path TEXT")
+    if "model_name" not in existing_columns:
+        cur.execute("ALTER TABLE detections ADD COLUMN model_name TEXT")
 
 
 def add_user(username: str, password_hash: str, role: str, created_at: Optional[str] = None):
@@ -208,13 +210,25 @@ def add_detection(
     bbox: str,
     original_image_path: Optional[str] = None,
     annotated_image_path: Optional[str] = None,
+    model_name: Optional[str] = None,
 ) -> None:
     conn = get_conn()
     cur = conn.cursor()
     now = datetime.now().isoformat()
     cur.execute(
-        "INSERT INTO detections(run_id, image_filename, product_name, class_name, confidence, bbox, original_image_path, annotated_image_path, created_at) VALUES(?,?,?,?,?,?,?,?,?)",
-        (run_id, image_filename, product_name, class_name, confidence, bbox, original_image_path, annotated_image_path, now),
+        "INSERT INTO detections(run_id, image_filename, product_name, class_name, confidence, bbox, original_image_path, annotated_image_path, model_name, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (
+            run_id,
+            image_filename,
+            product_name,
+            class_name,
+            confidence,
+            bbox,
+            original_image_path,
+            annotated_image_path,
+            model_name,
+            now,
+        ),
     )
     conn.commit()
     conn.close()
@@ -227,7 +241,7 @@ def search_detections(
 ) -> List[Dict[str, Any]]:
     conn = get_conn()
     cur = conn.cursor()
-    q = "SELECT d.id, d.run_id, d.image_filename, d.product_name, d.class_name, d.confidence, d.bbox, d.original_image_path, d.annotated_image_path, d.created_at, r.username FROM detections d JOIN runs r ON d.run_id = r.id WHERE 1=1"
+    q = "SELECT d.id, d.run_id, d.image_filename, d.product_name, d.class_name, d.confidence, d.bbox, d.original_image_path, d.annotated_image_path, d.model_name, d.created_at, r.username FROM detections d JOIN runs r ON d.run_id = r.id WHERE 1=1"
     params: List[Any] = []
     if class_names:
         placeholders = ",".join(["?"] * len(class_names))
@@ -302,7 +316,7 @@ def get_worker_detections(
 ) -> List[Dict[str, Any]]:
     conn = get_conn()
     cur = conn.cursor()
-    q = "SELECT d.id, d.run_id, d.image_filename, d.product_name, d.class_name, d.confidence, d.bbox, d.original_image_path, d.annotated_image_path, d.created_at FROM detections d JOIN runs r ON d.run_id = r.id WHERE r.username = ?"
+    q = "SELECT d.id, d.run_id, d.image_filename, d.product_name, d.class_name, d.confidence, d.bbox, d.original_image_path, d.annotated_image_path, d.model_name, d.created_at FROM detections d JOIN runs r ON d.run_id = r.id WHERE r.username = ?"
     params: List[Any] = [username]
     if class_names:
         placeholders = ",".join(["?"] * len(class_names))
