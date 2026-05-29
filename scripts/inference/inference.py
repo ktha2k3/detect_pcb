@@ -11,14 +11,14 @@ from ultralytics import YOLO
 current_file = Path(__file__).resolve()
 scripts_dir = current_file.parents[1]
 extract_dir = scripts_dir / "download_deps" / "pcb_dataset"
-model_path = scripts_dir / "download_deps" / "models" / "best.pt"
+model_path = scripts_dir / "download_deps" / "models" / "current_pcb_yolov8n_seg.pt"
 output_dir = scripts_dir / "runs_pcb"
 
 IMAGE_EXTENSIONS = ("*.jpg", "*.jpeg", "*.png", "*.JPG", "*.JPEG", "*.PNG")
 MODEL_REGISTRY = {
-    "current_pcb_yolov8n_seg": scripts_dir / "download_deps" / "models" / "best.pt",
-    "sammy_yolov8n_pcb_detect": scripts_dir / "download_deps" / "models" / "sammy_yolov8n_pcb" / "best.pt",
-    "kadiri_yolov8_pcb_detect": scripts_dir / "download_deps" / "models" / "kadiri_yolov8_pcb" / "best.pt",
+    "current_pcb_yolov8n_seg": scripts_dir / "download_deps" / "models" / "current_pcb_yolov8n_seg.pt",
+    "pcb_yolov8s_seg": scripts_dir / "download_deps" / "models" / "pcb_yolov8s_seg.pt",
+    "pcb_yolov8m_seg": scripts_dir / "download_deps" / "models" / "pcb_yolov8m_seg.pt",
 }
 
 

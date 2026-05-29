@@ -24,3 +24,5 @@ TestResults.xml
 
 .venv/
 venv/
+
+.env 
